@@ -54,17 +54,10 @@ app.post("/api/upload/photo", async (c) => {
     return c.json({ error: "Invalid file extension" }, 400);
   }
 
-  const { data: base64 } = await c.req.json<{ data: string }>();
-  const binaryStr = atob(base64);
-  const bytes = new Uint8Array(binaryStr.length);
-  for (let i = 0; i < binaryStr.length; i++) {
-    bytes[i] = binaryStr.charCodeAt(i);
-  }
-
   const contentType = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
   const key = `photos/${session.user.id}/${crypto.randomUUID()}.${ext}`;
 
-  await c.env.PHOTOS_BUCKET.put(key, bytes, {
+  await c.env.PHOTOS_BUCKET.put(key, c.req.raw.body, {
     httpMetadata: { contentType },
   });
 
