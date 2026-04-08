@@ -4,6 +4,7 @@
  */
 import { betterAuth } from "better-auth";
 import { LibsqlDialect } from "@libsql/kysely-libsql";
+import { expo } from '@better-auth/expo'
 
 const dialect = new LibsqlDialect({
   url: process.env.TURSO_DATABASE_URL!,
@@ -35,4 +36,5 @@ export default betterAuth({
     "https://www.librarypassport.ca",
     "tplpassportrn://",
   ],
+  plugins: [expo()],
 });

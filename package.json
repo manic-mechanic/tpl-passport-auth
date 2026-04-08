@@ -8,6 +8,7 @@
     "db:migrate": "wrangler exec -- better-auth migrate"
   },
   "dependencies": {
+    "@better-auth/expo": "^1.6.0",
     "@libsql/client": "^0.14.0",
     "@libsql/kysely-libsql": "^0.4.1",
     "better-auth": "^1.2.7",

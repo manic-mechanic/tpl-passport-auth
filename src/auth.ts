@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { LibsqlDialect } from "@libsql/kysely-libsql";
+import { expo } from '@better-auth/expo'
 
 export function createAuth(env: {
   TURSO_DATABASE_URL: string;
@@ -39,6 +40,7 @@ export function createAuth(env: {
       "https://www.librarypassport.ca",
       "tplpassportrn://",
     ],
+    plugins: [expo()],
   });
 }
 
