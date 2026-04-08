@@ -39,6 +39,12 @@ export function createAuth(env: {
       "https://librarypassport.ca",
       "https://www.librarypassport.ca",
       "tplpassportrn://",
+      // Expo dev client
+      ...(process.env.NODE_ENV === "development" ? [
+        "exp://",
+        "exp://**",
+        "exp://192.168.*.*:*/**",
+      ] : []),
     ],
     plugins: [expo()],
   });
