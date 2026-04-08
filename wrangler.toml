@@ -3,6 +3,10 @@ main = "src/index.ts"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
+[[routes]]
+pattern = "auth.librarypassport.ca"
+custom_domain = true
+
 [vars]
 BETTER_AUTH_URL = "https://auth.librarypassport.ca"
 
@@ -13,5 +17,3 @@ BETTER_AUTH_URL = "https://auth.librarypassport.ca"
 #   GOOGLE_CLIENT_ID
 #   GOOGLE_CLIENT_SECRET
 
-[env.dev.vars]
-BETTER_AUTH_URL = "http://localhost:8787"
