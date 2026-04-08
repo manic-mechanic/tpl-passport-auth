@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { createClient } from "@libsql/client";
+import { LibsqlDialect } from "@libsql/kysely-libsql";
 
 export function createAuth(env: {
   TURSO_DATABASE_URL: string;
@@ -9,7 +9,7 @@ export function createAuth(env: {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
 }) {
-  const db = createClient({
+  const dialect = new LibsqlDialect({
     url: env.TURSO_DATABASE_URL,
     authToken: env.TURSO_AUTH_TOKEN,
   });
@@ -19,7 +19,7 @@ export function createAuth(env: {
     secret: env.BETTER_AUTH_SECRET,
 
     database: {
-      dialect: db,
+      dialect,
       type: "sqlite",
     },
 
