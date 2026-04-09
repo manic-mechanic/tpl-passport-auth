@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createAuth } from "./auth";
 import { createDb } from "./db";
+import { sql } from 'kysely'
 
 type Bindings = {
   BETTER_AUTH_URL: string;
@@ -24,6 +25,7 @@ const ALLOWED_ORIGINS = [
   "https://librarypassport.ca",
   "https://www.librarypassport.ca",
   "tplpassportrn://",
+  "https://dev.librarypassport.ca",
 ];
 
 const corsMiddleware = cors({
@@ -38,6 +40,7 @@ const corsMiddleware = cors({
 app.use("/api/auth/*", corsMiddleware);
 app.use("/api/upload/*", corsMiddleware);
 app.use("/api/checkins*", corsMiddleware);
+app.use("/api/profile*", corsMiddleware);
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => {
   const auth = createAuth(c.env);
@@ -80,6 +83,8 @@ app.get("/api/checkins", async (c) => {
   return c.json(rows);
 });
 
+
+
 app.post("/api/checkins", async (c) => {
   const auth = createAuth(c.env);
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
@@ -104,6 +109,40 @@ app.post("/api/checkins", async (c) => {
     .execute();
   return c.json({ ok: true });
 });
+
+app.get('/api/profile', async (c) => {
+  const auth = createAuth(c.env)
+  const session = await auth.api.getSession({ headers: c.req.raw.headers })
+  if (!session) return c.json({ error: 'Unauthorized' }, 401)
+  const db = createDb(c.env)
+  const row = await db
+    .selectFrom('user_profile')
+    .select(['name', 'home_branch'])
+    .where('user_id', '=', session.user.id)
+    .executeTakeFirst()
+  return c.json(row ?? { name: '', home_branch: '' })
+})
+
+app.put('/api/profile', async (c) => {
+  const auth = createAuth(c.env)
+  const session = await auth.api.getSession({ headers: c.req.raw.headers })
+  if (!session) return c.json({ error: 'Unauthorized' }, 401)
+  const db = createDb(c.env)
+  const { name, homeBranch } = await c.req.json()
+  await db
+    .insertInto('user_profile')
+    .values({ user_id: session.user.id, name: name ?? '', home_branch: homeBranch ?? '' })
+    .onConflict(oc => oc
+      .column('user_id')
+      .doUpdateSet({
+        name: eb => eb.ref('excluded.name'),
+        home_branch: eb => eb.ref('excluded.home_branch'),
+        updated_at: sql`datetime('now')`,
+      })
+    )
+    .execute()
+  return c.json({ ok: true })
+})
 
 app.patch("/api/checkins/:timestamp", async (c) => {
   const auth = createAuth(c.env);
