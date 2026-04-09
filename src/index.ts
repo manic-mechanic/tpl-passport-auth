@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createAuth } from "./auth";
+import { createDb } from "./db";
 
 type Bindings = {
   BETTER_AUTH_URL: string;
@@ -29,13 +30,14 @@ const corsMiddleware = cors({
   origin: (origin) =>
     ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0],
   allowHeaders: ["Content-Type", "Authorization"],
-  allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
+  allowMethods: ["GET", "POST", "PUT", "PATCH", "OPTIONS"],
   credentials: true,
   maxAge: 600,
 });
 
 app.use("/api/auth/*", corsMiddleware);
 app.use("/api/upload/*", corsMiddleware);
+app.use("/api/checkins*", corsMiddleware);
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => {
   const auth = createAuth(c.env);
@@ -62,6 +64,61 @@ app.post("/api/upload/photo", async (c) => {
   });
 
   return c.json({ publicUrl: `${c.env.R2_PUBLIC_URL}/${key}` });
+});
+
+app.get("/api/checkins", async (c) => {
+  const auth = createAuth(c.env);
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!session) return c.json({ error: "Unauthorized" }, 401);
+  const db = createDb(c.env);
+  const rows = await db
+    .selectFrom("check_ins")
+    .select(["branch_code", "timestamp", "note", "photo_url"])
+    .where("user_id", "=", session.user.id)
+    .orderBy("timestamp", "desc")
+    .execute();
+  return c.json(rows);
+});
+
+app.post("/api/checkins", async (c) => {
+  const auth = createAuth(c.env);
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!session) return c.json({ error: "Unauthorized" }, 401);
+  const db = createDb(c.env);
+  const { branchCode, timestamp, note, photoUri } = await c.req.json();
+  await db
+    .insertInto("check_ins")
+    .values({
+      user_id: session.user.id,
+      branch_code: branchCode,
+      timestamp,
+      note: note ?? "",
+      photo_url: photoUri ?? null,
+    })
+    .onConflict((oc) =>
+      oc.columns(["user_id", "timestamp"]).doUpdateSet({
+        note: (eb) => eb.ref("excluded.note"),
+        photo_url: (eb) => eb.ref("excluded.photo_url"),
+      })
+    )
+    .execute();
+  return c.json({ ok: true });
+});
+
+app.patch("/api/checkins/:timestamp", async (c) => {
+  const auth = createAuth(c.env);
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!session) return c.json({ error: "Unauthorized" }, 401);
+  const db = createDb(c.env);
+  const { photoUri } = await c.req.json();
+  const timestamp = decodeURIComponent(c.req.param("timestamp"));
+  await db
+    .updateTable("check_ins")
+    .set({ photo_url: photoUri })
+    .where("user_id", "=", session.user.id)
+    .where("timestamp", "=", timestamp)
+    .execute();
+  return c.json({ ok: true });
 });
 
 app.get("/", (c) => c.text("tpl-passport-auth ok"));

@@ -7,8 +7,17 @@ compatibility_flags = ["nodejs_compat"]
 pattern = "auth.librarypassport.ca"
 custom_domain = true
 
+[[r2_buckets]]
+binding = "PHOTOS_BUCKET"
+bucket_name = "tpl-passport-photos"
+
 [vars]
 BETTER_AUTH_URL = "https://auth.librarypassport.ca"
+R2_BUCKET_NAME = "tpl-passport-photos"
+# Set R2_ACCOUNT_ID to your Cloudflare account ID (found in dashboard sidebar)
+# Set R2_PUBLIC_URL to the public bucket URL after enabling public access:
+#   - Default: https://pub-<hash>.r2.dev  (from R2 bucket settings → Public Access)
+#   - Custom domain: https://photos.librarypassport.ca
 
 # Secrets — set via `wrangler secret put <NAME>`:
 #   BETTER_AUTH_SECRET
@@ -16,4 +25,8 @@ BETTER_AUTH_URL = "https://auth.librarypassport.ca"
 #   TURSO_AUTH_TOKEN
 #   GOOGLE_CLIENT_ID
 #   GOOGLE_CLIENT_SECRET
+#   R2_ACCOUNT_ID         — your Cloudflare account ID
+#   R2_ACCESS_KEY_ID      — R2 API token access key ID
+#   R2_SECRET_ACCESS_KEY  — R2 API token secret access key
+#   R2_PUBLIC_URL         — public base URL of the bucket (no trailing slash)
 
