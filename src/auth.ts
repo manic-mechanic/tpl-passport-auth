@@ -41,6 +41,7 @@ export function createAuth(env: {
       "tplpassportrn://",
       "exp://",
       "exp://**",
+      "https://dev.librarypassport.ca",
     ],
     plugins: [expo()],
   });
