@@ -141,6 +141,22 @@ app.post("/api/checkins", async (c) => {
     return c.json({ error: "Invalid photoUri" }, 400);
   }
 
+  // One check-in per user+branch per calendar day. If a record already exists for
+  // this branch on the same day with a different timestamp (created on another device),
+  // silently ignore the duplicate — the canonical record stays.
+  const datePrefix = timestamp.slice(0, 10); // "YYYY-MM-DD"
+  const existing = await getDb(c.env)
+    .selectFrom("check_ins")
+    .select("timestamp")
+    .where("user_id", "=", session.user.id)
+    .where("branch_code", "=", branchCode)
+    .where("timestamp", "like", `${datePrefix}%`)
+    .executeTakeFirst();
+
+  if (existing && existing.timestamp !== timestamp) {
+    return c.json({ ok: true });
+  }
+
   await getDb(c.env)
     .insertInto("check_ins")
     .values({
