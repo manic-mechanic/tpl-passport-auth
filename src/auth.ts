@@ -28,6 +28,13 @@ export function createAuth(env: {
       enabled: true,
     },
 
+    user: {
+      changeEmail: {
+        enabled: true,
+        updateEmailWithoutVerification: true,
+      },
+    },
+
     socialProviders: {
       google: {
         clientId: env.GOOGLE_CLIENT_ID,
