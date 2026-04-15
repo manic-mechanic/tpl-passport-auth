@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { LibsqlDialect } from "@libsql/kysely-libsql";
 import { expo } from '@better-auth/expo'
+import { TRUSTED_ORIGINS } from './config'
 
 export function createAuth(env: {
   TURSO_DATABASE_URL: string;
@@ -42,14 +43,7 @@ export function createAuth(env: {
       },
     },
 
-    trustedOrigins: [
-      "https://librarypassport.ca",
-      "https://www.librarypassport.ca",
-      "tplpassportrn://",
-      "exp://",
-      "exp://**",
-      "https://dev.librarypassport.ca",
-    ],
+    trustedOrigins: TRUSTED_ORIGINS,
     plugins: [expo()],
   });
 }

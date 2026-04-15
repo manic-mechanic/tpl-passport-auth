@@ -5,6 +5,7 @@ import { createAuth } from "./auth";
 import { createDb } from "./db";
 import { sql } from 'kysely'
 import type { Auth } from "./auth";
+import { ALLOWED_ORIGINS } from "./config";
 
 type Bindings = {
   BETTER_AUTH_URL: string;
@@ -22,13 +23,6 @@ type Bindings = {
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
-
-const ALLOWED_ORIGINS = [
-  "https://librarypassport.ca",
-  "https://www.librarypassport.ca",
-  "tplpassportrn://",
-  "https://dev.librarypassport.ca",
-];
 
 const corsMiddleware = cors({
   origin: (origin) => ALLOWED_ORIGINS.includes(origin) ? origin : null,
