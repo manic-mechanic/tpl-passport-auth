@@ -6,7 +6,8 @@ import { createDb } from "./db";
 import { sql } from 'kysely'
 import type { Auth } from "./auth";
 import { ALLOWED_ORIGINS } from "./config";
-import { checkUploadLength, isOwnPhotoUrl, sameDaySearchWindow, torontoDayKey } from "./validation";
+import { saveCheckIn } from "./checkins";
+import { isCanonicalCheckInTimestamp, isUserPhotoUrl, readBodyWithLimit } from "./validation";
 
 type Bindings = {
   BETTER_AUTH_URL: string;
@@ -58,7 +59,7 @@ function getDb(env: Bindings): ReturnType<typeof createDb> {
 // Schemas
 const CheckInSchema = z.object({
   branchCode: z.string().min(1),
-  timestamp: z.string().min(1),
+  timestamp: z.string().refine(isCanonicalCheckInTimestamp, "Expected an ISO UTC timestamp (Date#toISOString)"),
   note: z.string().optional(),
   photoUri: z.string().url().nullable().optional(),
 });
@@ -81,6 +82,24 @@ app.on(["GET", "POST"], "/api/auth/*", (c) => {
   return getAuth(c.env).handler(c.req.raw);
 });
 
+// A photo URL that's already on this check-in is accepted unchanged, so
+// re-sending a check-in (e.g. to edit its note) keeps working for photos
+// stored before the per-user key check.
+async function isStoredPhotoUrl(
+  db: ReturnType<typeof createDb>,
+  userId: string,
+  timestamp: string,
+  photoUri: string,
+): Promise<boolean> {
+  const row = await db
+    .selectFrom("check_ins")
+    .select("photo_url")
+    .where("user_id", "=", userId)
+    .where("timestamp", "=", timestamp)
+    .executeTakeFirst();
+  return row?.photo_url === photoUri;
+}
+
 const ALLOWED_EXTS = new Set(["jpg", "jpeg", "png", "webp", "heic"]);
 
 app.post("/api/upload/photo", async (c) => {
@@ -92,13 +111,13 @@ app.post("/api/upload/photo", async (c) => {
     return c.json({ error: "Invalid file extension" }, 400);
   }
 
-  const length = checkUploadLength(c.req.header("content-length"));
-  if (!length.ok) return c.json({ error: length.error }, length.status);
+  const upload = await readBodyWithLimit(c.req.raw.body, c.req.header("content-length"));
+  if (!upload.ok) return c.json({ error: upload.error }, upload.status);
 
   const contentType = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
   const key = `photos/${session.user.id}/${crypto.randomUUID()}.${ext}`;
 
-  await c.env.PHOTOS_BUCKET.put(key, c.req.raw.body, {
+  await c.env.PHOTOS_BUCKET.put(key, upload.bytes, {
     httpMetadata: { contentType },
   });
 
@@ -128,47 +147,21 @@ app.post("/api/checkins", async (c) => {
   if (!parsed.success) return c.json({ error: "Invalid request", details: parsed.error.flatten() }, 400);
 
   const { branchCode, timestamp, note, photoUri } = parsed.data;
-  if (photoUri && !isOwnPhotoUrl(photoUri, c.env.R2_PUBLIC_URL)) {
+  const userId = session.user.id;
+  const db = getDb(c.env);
+
+  if (photoUri && !isUserPhotoUrl(photoUri, c.env.R2_PUBLIC_URL, userId)
+      && !(await isStoredPhotoUrl(db, userId, timestamp, photoUri))) {
     return c.json({ error: "Invalid photoUri" }, 400);
   }
 
-  const day = torontoDayKey(timestamp);
-  if (!day) return c.json({ error: "Invalid timestamp" }, 400);
-
-  // One check-in per user+branch per day, counted in Toronto time like the app.
-  // If a record already exists for this branch on the same day with a different
-  // timestamp (created on another device), keep that one and tell the client.
-  const { from, to } = sameDaySearchWindow(timestamp);
-  const nearby = await getDb(c.env)
-    .selectFrom("check_ins")
-    .select("timestamp")
-    .where("user_id", "=", session.user.id)
-    .where("branch_code", "=", branchCode)
-    .where("timestamp", ">=", from)
-    .where("timestamp", "<=", to)
-    .execute();
-  const existing = nearby.find((row) => torontoDayKey(row.timestamp) === day);
-
-  if (existing && existing.timestamp !== timestamp) {
-    return c.json({ ok: true, duplicateOf: existing.timestamp });
+  const saved = await saveCheckIn(db, { userId, branchCode, timestamp, note: note ?? "", photoUri: photoUri ?? null });
+  if (!saved) return c.json({ error: "Invalid timestamp" }, 400);
+  if (saved.duplicateOf) {
+    // Another check-in already holds this branch and day. Tell the client
+    // which one, so it doesn't treat this one as saved.
+    return c.json({ ok: true, duplicateOf: saved.duplicateOf });
   }
-
-  await getDb(c.env)
-    .insertInto("check_ins")
-    .values({
-      user_id: session.user.id,
-      branch_code: branchCode,
-      timestamp,
-      note: note ?? "",
-      photo_url: photoUri ?? null,
-    })
-    .onConflict((oc) =>
-      oc.columns(["user_id", "timestamp"]).doUpdateSet({
-        note: (eb) => eb.ref("excluded.note"),
-        photo_url: (eb) => eb.ref("excluded.photo_url"),
-      })
-    )
-    .execute();
   return c.json({ ok: true });
 });
 
@@ -220,11 +213,12 @@ app.patch("/api/checkins/:timestamp", async (c) => {
   if (!parsed.success) return c.json({ error: "Invalid request", details: parsed.error.flatten() }, 400);
 
   const { photoUri } = parsed.data;
-  if (photoUri && !isOwnPhotoUrl(photoUri, c.env.R2_PUBLIC_URL)) {
+  const timestamp = decodeURIComponent(c.req.param("timestamp"));
+  if (photoUri && !isUserPhotoUrl(photoUri, c.env.R2_PUBLIC_URL, session.user.id)
+      && !(await isStoredPhotoUrl(getDb(c.env), session.user.id, timestamp, photoUri))) {
     return c.json({ error: "Invalid photoUri" }, 400);
   }
 
-  const timestamp = decodeURIComponent(c.req.param("timestamp"));
   await getDb(c.env)
     .updateTable("check_ins")
     .set({ photo_url: photoUri })
