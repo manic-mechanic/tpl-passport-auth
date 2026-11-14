@@ -6,6 +6,7 @@ import { createDb } from "./db";
 import { sql } from 'kysely'
 import type { Auth } from "./auth";
 import { ALLOWED_ORIGINS } from "./config";
+import { checkUploadLength, isOwnPhotoUrl, sameDaySearchWindow, torontoDayKey } from "./validation";
 
 type Bindings = {
   BETTER_AUTH_URL: string;
@@ -71,8 +72,6 @@ const PhotoUriSchema = z.object({
   photoUri: z.string().url().nullable(),
 });
 
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
-
 app.onError((err, c) => {
   console.error(err);
   return c.json({ error: "Internal server error" }, 500);
@@ -93,10 +92,8 @@ app.post("/api/upload/photo", async (c) => {
     return c.json({ error: "Invalid file extension" }, 400);
   }
 
-  const contentLength = Number(c.req.header("content-length") ?? 0);
-  if (contentLength > MAX_UPLOAD_BYTES) {
-    return c.json({ error: "File too large (max 10 MB)" }, 413);
-  }
+  const length = checkUploadLength(c.req.header("content-length"));
+  if (!length.ok) return c.json({ error: length.error }, length.status);
 
   const contentType = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
   const key = `photos/${session.user.id}/${crypto.randomUUID()}.${ext}`;
@@ -131,24 +128,29 @@ app.post("/api/checkins", async (c) => {
   if (!parsed.success) return c.json({ error: "Invalid request", details: parsed.error.flatten() }, 400);
 
   const { branchCode, timestamp, note, photoUri } = parsed.data;
-  if (photoUri && !photoUri.startsWith(c.env.R2_PUBLIC_URL)) {
+  if (photoUri && !isOwnPhotoUrl(photoUri, c.env.R2_PUBLIC_URL)) {
     return c.json({ error: "Invalid photoUri" }, 400);
   }
 
-  // One check-in per user+branch per calendar day. If a record already exists for
-  // this branch on the same day with a different timestamp (created on another device),
-  // silently ignore the duplicate — the canonical record stays.
-  const datePrefix = timestamp.slice(0, 10); // "YYYY-MM-DD"
-  const existing = await getDb(c.env)
+  const day = torontoDayKey(timestamp);
+  if (!day) return c.json({ error: "Invalid timestamp" }, 400);
+
+  // One check-in per user+branch per day, counted in Toronto time like the app.
+  // If a record already exists for this branch on the same day with a different
+  // timestamp (created on another device), keep that one and tell the client.
+  const { from, to } = sameDaySearchWindow(timestamp);
+  const nearby = await getDb(c.env)
     .selectFrom("check_ins")
     .select("timestamp")
     .where("user_id", "=", session.user.id)
     .where("branch_code", "=", branchCode)
-    .where("timestamp", "like", `${datePrefix}%`)
-    .executeTakeFirst();
+    .where("timestamp", ">=", from)
+    .where("timestamp", "<=", to)
+    .execute();
+  const existing = nearby.find((row) => torontoDayKey(row.timestamp) === day);
 
   if (existing && existing.timestamp !== timestamp) {
-    return c.json({ ok: true });
+    return c.json({ ok: true, duplicateOf: existing.timestamp });
   }
 
   await getDb(c.env)
@@ -218,7 +220,7 @@ app.patch("/api/checkins/:timestamp", async (c) => {
   if (!parsed.success) return c.json({ error: "Invalid request", details: parsed.error.flatten() }, 400);
 
   const { photoUri } = parsed.data;
-  if (photoUri && !photoUri.startsWith(c.env.R2_PUBLIC_URL)) {
+  if (photoUri && !isOwnPhotoUrl(photoUri, c.env.R2_PUBLIC_URL)) {
     return c.json({ error: "Invalid photoUri" }, 400);
   }
 
