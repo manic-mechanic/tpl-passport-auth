@@ -1,0 +1,9 @@
+{
+  // Tests run in Node (vitest), so they also get Node's types. The Worker
+  // code in src/ is checked by tsconfig.json with Workers types only.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "node"]
+  },
+  "include": ["src/**/*", "tests/**/*"]
+}
