@@ -1,5 +1,5 @@
-export * from './date'
 export * from './types'
+export * from './date'
 export * from './region'
 export * from './badges'
 export * from './stamp'

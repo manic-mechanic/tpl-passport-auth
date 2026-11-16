@@ -5,6 +5,9 @@ import type { Branch } from './types'
 
 export const physicalBranches: Branch[] = (branchData as Branch[]).filter(b => b.PhysicalBranch === 1)
 export const sortedBranches: Branch[] = [...physicalBranches].sort((a, b) => a.BranchName.localeCompare(b.BranchName))
+// Physical branches keyed by BranchCode.
+export const branchesByCode: Record<string, Branch | undefined> =
+  Object.fromEntries(physicalBranches.map(b => [b.BranchCode, b]))
 
 export const DISTRICT_ORDER = [
   'Etobicoke-York',
@@ -36,10 +39,12 @@ export type AlphaPage = (typeof ALPHA_PAGES)[number] & { branches: Branch[] }
 
 export const branchesByAlphaPage: AlphaPage[] = ALPHA_PAGES.map(page => ({
   ...page,
-  branches: sortedBranches.filter(b => {
-    const c = b.BranchName[0].toUpperCase()
-    return c >= page.from && c <= page.to
-  }),
+  branches: physicalBranches
+    .filter(b => {
+      const c = b.BranchCode[0]?.toUpperCase() ?? ''
+      return c >= page.from && c <= page.to
+    })
+    .sort((a, b) => a.BranchCode.localeCompare(b.BranchCode)),
 }))
 
 // Accepts string or number coords — branch JSON stores Lat/Long as strings,
