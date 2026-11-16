@@ -219,12 +219,15 @@ app.patch("/api/checkins/:timestamp", async (c) => {
     return c.json({ error: "Invalid photoUri" }, 400);
   }
 
-  await getDb(c.env)
+  const result = await getDb(c.env)
     .updateTable("check_ins")
     .set({ photo_url: photoUri })
     .where("user_id", "=", session.user.id)
     .where("timestamp", "=", timestamp)
-    .execute();
+    .executeTakeFirst();
+  // No matching check-in (e.g. its POST hasn't landed): say so, so the app
+  // doesn't treat the photo as attached and pushes it again on the next sync.
+  if (Number(result.numUpdatedRows) === 0) return c.json({ error: "Check-in not found" }, 404);
   return c.json({ ok: true });
 });
 

@@ -109,6 +109,20 @@ describe("Worker app", () => {
     })).status).toBe(400);
   });
 
+  it("attaches a photo to an existing check-in, and 404s for a missing one", async () => {
+    const patch = (timestamp: string, photoUri: string) => call(`/api/checkins/${encodeURIComponent(timestamp)}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ photoUri }),
+    });
+    const session = (await (await call("/api/auth/get-session")).json()) as { user: { id: string } };
+    const photo = `https://photos.example.test/photos/${session.user.id}/a.jpg`;
+
+    expect((await patch("2026-11-14T14:00:00.000Z", photo)).status).toBe(200);
+    const list = (await (await call("/api/checkins")).json()) as { timestamp: string; photo_url: string | null }[];
+    expect(list.find(r => r.timestamp === "2026-11-14T14:00:00.000Z")?.photo_url).toBe(photo);
+
+    expect((await patch("2026-10-01T14:00:00.000Z", photo)).status).toBe(404);
+  });
+
   it("stores and returns the profile", async () => {
     const put = await call("/api/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Reader", homeBranch: "AN" }) });
     expect(put.status).toBe(200);
