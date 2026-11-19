@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { sentry } from "@sentry/hono/cloudflare";
 import { z } from "zod";
 import { createAuth } from "./auth";
 import { createDb } from "./db";
@@ -22,9 +23,34 @@ type Bindings = {
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
   R2_PUBLIC_URL: string;
+  // A DSN is a public key (the web app's HTML includes this one), so it's
+  // set in wrangler.toml [vars]. Unset or empty means Sentry stays off: tests
+  // don't set it, and .dev.vars sets it empty for `wrangler dev`.
+  SENTRY_DSN?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+// Report errors to Sentry, first so it covers every route. This server
+// handles passwords, session cookies and OAuth codes, so collect nothing
+// from requests beyond the method and path: no headers, cookies, bodies,
+// query strings or user info. Errors only, no tracing.
+app.use(sentry(app, (env: Bindings) => ({
+  dsn: env.SENTRY_DSN,
+  enabled: !!env.SENTRY_DSN,
+  environment: "production",
+  initialScope: { tags: { service: "auth" } },
+  tracesSampleRate: 0,
+  dataCollection: {
+    userInfo: false,
+    cookies: false,
+    httpHeaders: false,
+    httpBodies: [],
+    urlQueryParams: false,
+    databaseQueryData: false,
+    stackFrameVariables: false,
+  },
+})));
 
 const corsMiddleware = cors({
   origin: (origin) => ALLOWED_ORIGINS.includes(origin) ? origin : null,

@@ -11,7 +11,15 @@ custom_domain = true
 binding = "PHOTOS_BUCKET"
 bucket_name = "tpl-passport-photos"
 
+# Workers Logs: keeps console output (including the onError log) so failures
+# can be looked up in the Cloudflare dashboard.
+[observability]
+enabled = true
+
 [vars]
+# Sentry project for the auth server's errors (tagged service: auth). The
+# DSN is a public key, not a secret.
+SENTRY_DSN = "https://acb701f67ae8afd5590c477e83723d82@o4510749186588672.ingest.us.sentry.io/4511176097333248"
 BETTER_AUTH_URL = "https://auth.librarypassport.ca"
 R2_BUCKET_NAME = "tpl-passport-photos"
 # Set R2_ACCOUNT_ID to your Cloudflare account ID (found in dashboard sidebar)
