@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { sentry } from "@sentry/hono/cloudflare";
+import { captureMessage } from "@sentry/cloudflare";
 import { z } from "zod";
 import { createAuth } from "./auth";
 import { createDb } from "./db";
@@ -164,20 +165,33 @@ app.post("/api/upload/photo", async (c) => {
     userId,
     incomingBytes: upload.bytes.byteLength,
     referencedKeys: async () => {
+      // The user's own check-ins, plus any check-in pointing into this
+      // user's folder: before photo URLs were checked per user, a check-in
+      // could point at another user's photo, and that photo is still in use.
       const rows = await getDb(c.env)
         .selectFrom("check_ins")
-        .select("photo_url")
-        .where("user_id", "=", userId)
+        .select(["user_id", "photo_url"])
         .where("photo_url", "is not", null)
+        .where(eb => eb.or([
+          eb("user_id", "=", userId),
+          eb("photo_url", "like", `%/photos/${userId}/%`),
+        ]))
         .execute();
       const keys = new Set<string>();
       let unmatched = 0;
-      for (const { photo_url } of rows) {
+      for (const { user_id, photo_url } of rows) {
         const key = photo_url ? photoKeyFromUrl(photo_url, userId) : null;
         if (key) keys.add(key);
-        else unmatched++;
+        else if (user_id === userId) unmatched++;
       }
-      if (unmatched) console.warn(`${unmatched} photo URL(s) for ${userId} don't match a stored key; not deleting unused photos`);
+      if (unmatched) {
+        // Cleanup stays off for this user until those URLs are looked at,
+        // so once they reach the quota every upload is refused.
+        captureMessage(`Photo quota cleanup skipped: ${unmatched} photo URL(s) don't match a stored key`, {
+          level: "warning",
+          extra: { userId, unmatched },
+        });
+      }
       return { keys, unmatched };
     },
   });

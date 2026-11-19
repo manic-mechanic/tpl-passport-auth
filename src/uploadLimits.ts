@@ -13,14 +13,17 @@
 // Nothing else deletes from the bucket, and replacing or retaking a photo
 // uploads a new object, so a user's folder collects photos no check-in uses.
 // When an upload would go over the quota, those are deleted first (if older
-// than a day, so a photo uploaded but not yet attached to its check-in is
+// than 30 days, so a photo uploaded but not yet attached to its check-in is
 // kept, and only if every check-in's photo URL maps to a key, so nothing is
 // deleted on a guess), and the quota is checked again. Only photos the user's check-ins
 // actually use can fill it.
 
 export const MAX_PHOTOS_PER_USER = 300;
 export const MAX_PHOTO_BYTES_PER_USER = 300 * 1024 * 1024;
-export const ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+// Long, because a photo can be uploaded well before its check-in reaches the
+// server (a device that goes offline, or isn't opened again for a while,
+// sends it on its next sync), and cleanup only runs at the quota anyway.
+export const ORPHAN_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
 
 // Listing stops here; well past the quota, so it only bounds a user who got
 // far over it some other way.

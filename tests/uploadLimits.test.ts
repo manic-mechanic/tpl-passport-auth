@@ -32,7 +32,7 @@ function bucket(objects: Obj[], pageSize = 1000) {
   return b as unknown as R2Bucket & typeof b;
 }
 
-const photos = (n: number, size = 10, uploaded = daysAgo(3), user = "u1") =>
+const photos = (n: number, size = 10, uploaded = daysAgo(40), user = "u1") =>
   Array.from({ length: n }, (_, i) => ({ key: `photos/${user}/${i}.jpg`, size, uploaded }));
 
 const limits = { photos: 5, bytes: 1000 };
@@ -41,7 +41,7 @@ const run = (b: R2Bucket, incomingBytes: number, referenced: string[] = [], unma
 
 describe("enforcePhotoQuota", () => {
   it("allows an upload under both limits, counting only the user's folder", async () => {
-    const b = bucket([...photos(2, 100), ...photos(10, 100, daysAgo(3), "u2")]);
+    const b = bucket([...photos(2, 100), ...photos(10, 100, daysAgo(40), "u2")]);
     expect(await run(b, 100)).toMatchObject({ ok: true, count: 2, bytes: 200, deleted: 0 });
   });
 
@@ -66,8 +66,8 @@ describe("enforcePhotoQuota", () => {
     expect(b.stored.map(o => o.key)).toEqual(used);
   });
 
-  it("keeps unused photos less than a day old, which may not be attached yet", async () => {
-    const b = bucket([...photos(4), { key: "photos/u1/new.jpg", size: 10, uploaded: daysAgo(0.5) }]);
+  it("keeps unused photos less than 30 days old, which may not be attached yet", async () => {
+    const b = bucket([...photos(4), { key: "photos/u1/new.jpg", size: 10, uploaded: daysAgo(29) }]);
     const used = b.stored.slice(0, 4).map(o => o.key);
     expect(await run(b, 10, used)).toMatchObject({ ok: false, deleted: 0 });
     expect(b.stored).toHaveLength(5);

@@ -36,7 +36,9 @@ export async function saveCheckIn(
     )
     ON CONFLICT (user_id, "timestamp") DO UPDATE SET
       note = excluded.note,
-      photo_url = excluded.photo_url
+      -- A re-send without a photo (e.g. a note edit from a device that
+      -- doesn't have the photo yet) keeps the stored one; PATCH clears it.
+      photo_url = COALESCE(excluded.photo_url, check_ins.photo_url)
   `.execute(db);
 
   if (Number(result.numAffectedRows ?? 0) > 0) return { duplicateOf: null };

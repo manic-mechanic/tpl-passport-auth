@@ -168,19 +168,22 @@ describe("Worker app", () => {
       expect(await full.json()).toMatchObject({ code: "photo_quota" });
       expect(stored).toHaveLength(302);
 
-      // Once those are older than a day, the ones no check-in uses are
-      // deleted to make room. a.jpg is attached to a check-in above, so it
-      // stays (along with the 2 uploads from today).
+      // Once those are over 30 days old, the ones no check-in uses are
+      // deleted to make room. a.jpg is attached to this user's check-in
+      // above, and old-0.jpg to another user's (allowed before photo URLs
+      // were checked per user), so both stay, along with today's 2 uploads.
       allowed = 1;
-      const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+      const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
       for (const o of stored) if (o.key.includes("/old-")) o.uploaded = old;
       stored.push({ key: `${folder}a.jpg`, size: 1, uploaded: old });
+      await createDb(env).insertInto("check_ins").values({
+        user_id: "someone-else", branch_code: "AN", timestamp: "2026-01-01T15:00:00.000Z",
+        note: "", photo_url: `https://old-bucket.example/${folder}old-0.jpg`,
+      }).execute();
       expect((await upload()).status).toBe(200);
-      expect(stored.map(o => o.key.replace(folder, "")).sort()).toEqual(
-        expect.arrayContaining(["a.jpg"]),
-      );
-      expect(stored.filter(o => o.key.includes("/old-"))).toHaveLength(0);
-      expect(stored).toHaveLength(4);
+      expect(stored.map(o => o.key.replace(folder, ""))).toEqual(expect.arrayContaining(["a.jpg", "old-0.jpg"]));
+      expect(stored.filter(o => o.key.includes("/old-"))).toHaveLength(1);
+      expect(stored).toHaveLength(5);
     } finally {
       Object.assign(env, original);
     }
