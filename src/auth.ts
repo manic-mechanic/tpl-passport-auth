@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { captureException } from "@sentry/cloudflare";
 import { LibsqlDialect } from "@libsql/kysely-libsql";
 import { expo } from '@better-auth/expo'
 import { TRUSTED_ORIGINS } from './config'
@@ -45,6 +46,17 @@ export function createAuth(env: {
 
     trustedOrigins: TRUSTED_ORIGINS,
     plugins: [expo()],
+
+    // better-auth catches its own errors and answers with a response, so
+    // Sentry's Hono middleware never sees them. Report the unexpected ones
+    // (a database outage, a bug), not 4xx answers like a wrong password.
+    onAPIError: {
+      onError(error) {
+        const status = (error as { statusCode?: unknown }).statusCode;
+        if (typeof status === "number" && status < 500) return;
+        captureException(error);
+      },
+    },
   });
 }
 

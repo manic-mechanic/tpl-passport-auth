@@ -23,8 +23,9 @@ type Bindings = {
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
   R2_PUBLIC_URL: string;
-  // Public (it's in the web app's HTML too), so set in wrangler.toml [vars].
-  // Unset (tests, local dev) means Sentry stays off.
+  // A DSN is a public key (the web app's HTML includes this one), so it's
+  // set in wrangler.toml [vars]. Unset or empty means Sentry stays off: tests
+  // don't set it, and .dev.vars sets it empty for `wrangler dev`.
   SENTRY_DSN?: string;
 };
 
