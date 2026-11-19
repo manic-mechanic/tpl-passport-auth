@@ -11,6 +11,16 @@ custom_domain = true
 binding = "PHOTOS_BUCKET"
 bucket_name = "tpl-passport-photos"
 
+# Per-user photo upload rate limit (src/uploadLimits.ts). period must be 10
+# or 60 seconds; namespace_id only has to be unique within the account.
+[[ratelimits]]
+name = "PHOTO_UPLOAD_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 20
+  period = 60
+
 # Workers Logs: keeps console output (including the onError log) so failures
 # can be looked up in the Cloudflare dashboard.
 [observability]

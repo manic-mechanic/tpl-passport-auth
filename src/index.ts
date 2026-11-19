@@ -9,6 +9,7 @@ import type { Auth } from "./auth";
 import { ALLOWED_ORIGINS } from "./config";
 import { saveCheckIn } from "./checkins";
 import { isCanonicalCheckInTimestamp, isUserPhotoUrl, readBodyWithLimit } from "./validation";
+import { checkPhotoQuota } from "./uploadLimits";
 
 type Bindings = {
   BETTER_AUTH_URL: string;
@@ -27,6 +28,9 @@ type Bindings = {
   // set in wrangler.toml [vars]. Unset or empty means Sentry stays off: tests
   // don't set it, and .dev.vars sets it empty for `wrangler dev`.
   SENTRY_DSN?: string;
+  // Workers Rate Limiting binding (wrangler.toml [[ratelimits]]). Optional so
+  // tests can run without one.
+  PHOTO_UPLOAD_LIMITER?: RateLimit;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -137,8 +141,20 @@ app.post("/api/upload/photo", async (c) => {
     return c.json({ error: "Invalid file extension" }, 400);
   }
 
+  // Limits per user: see src/uploadLimits.ts.
+  if (c.env.PHOTO_UPLOAD_LIMITER) {
+    const { success } = await c.env.PHOTO_UPLOAD_LIMITER.limit({ key: session.user.id });
+    if (!success) {
+      c.header("Retry-After", "60");
+      return c.json({ error: "Too many uploads, try again in a minute" }, 429);
+    }
+  }
+
   const upload = await readBodyWithLimit(c.req.raw.body, c.req.header("content-length"));
   if (!upload.ok) return c.json({ error: upload.error }, upload.status);
+
+  const quota = await checkPhotoQuota(c.env.PHOTOS_BUCKET, session.user.id, upload.bytes.byteLength);
+  if (!quota.ok) return c.json({ error: quota.error }, 403);
 
   const contentType = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
   const key = `photos/${session.user.id}/${crypto.randomUUID()}.${ext}`;

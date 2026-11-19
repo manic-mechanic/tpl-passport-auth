@@ -129,6 +129,35 @@ describe("Worker app", () => {
     expect(await (await call("/api/profile")).json()).toEqual({ name: "Reader", home_branch: "AN" });
   });
 
+  it("limits photo uploads per user: rate, then storage quota", async () => {
+    const stored: { key: string; size: number }[] = [];
+    let allowed = 2;
+    Object.assign(env, {
+      PHOTOS_BUCKET: {
+        async put(key: string, bytes: Uint8Array) { stored.push({ key, size: bytes.byteLength }); },
+        async list({ prefix }: { prefix: string }) {
+          return { objects: stored.filter(o => o.key.startsWith(prefix)), truncated: false, delimitedPrefixes: [] };
+        },
+      },
+      PHOTO_UPLOAD_LIMITER: { async limit() { return { success: allowed-- > 0 }; } },
+    });
+    const upload = () => call("/api/upload/photo?ext=jpg", { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: new Uint8Array(10) });
+
+    expect((await upload()).status).toBe(200);
+    expect((await upload()).status).toBe(200);
+    const limited = await upload();
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("Retry-After")).toBe("60");
+    expect(stored).toHaveLength(2);
+
+    // Over the photo quota: refused before storing.
+    allowed = 1;
+    stored.push(...Array.from({ length: 300 }, (_, i) => ({ key: `${stored[0]!.key.replace(/[^/]+$/, "")}old-${i}.jpg`, size: 1 })));
+    const full = await upload();
+    expect(full.status).toBe(403);
+    expect(stored).toHaveLength(302);
+  });
+
   it("signs out", async () => {
     const res = await call("/api/auth/sign-out", { method: "POST" });
     expect(res.status).toBe(200);
