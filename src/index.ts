@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { sentry } from "@sentry/hono/cloudflare";
+import { captureMessage } from "@sentry/cloudflare";
 import { z } from "zod";
 import { createAuth } from "./auth";
 import { createDb } from "./db";
@@ -9,6 +10,7 @@ import type { Auth } from "./auth";
 import { ALLOWED_ORIGINS } from "./config";
 import { saveCheckIn } from "./checkins";
 import { isCanonicalCheckInTimestamp, isUserPhotoUrl, readBodyWithLimit } from "./validation";
+import { enforcePhotoQuota, photoKeyFromUrl } from "./uploadLimits";
 
 type Bindings = {
   BETTER_AUTH_URL: string;
@@ -27,6 +29,9 @@ type Bindings = {
   // set in wrangler.toml [vars]. Unset or empty means Sentry stays off: tests
   // don't set it, and .dev.vars sets it empty for `wrangler dev`.
   SENTRY_DSN?: string;
+  // Workers Rate Limiting binding (wrangler.toml [[ratelimits]]). Optional so
+  // tests can run without one.
+  PHOTO_UPLOAD_LIMITER?: RateLimit;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -56,6 +61,8 @@ const corsMiddleware = cors({
   origin: (origin) => ALLOWED_ORIGINS.includes(origin) ? origin : null,
   allowHeaders: ["Content-Type", "Authorization"],
   allowMethods: ["GET", "POST", "PUT", "PATCH", "OPTIONS"],
+  // So the app can read when to retry after a 429 on photo uploads.
+  exposeHeaders: ["Retry-After"],
   credentials: true,
   maxAge: 600,
 });
@@ -139,6 +146,59 @@ app.post("/api/upload/photo", async (c) => {
 
   const upload = await readBodyWithLimit(c.req.raw.body, c.req.header("content-length"));
   if (!upload.ok) return c.json({ error: upload.error }, upload.status);
+
+  // Limits per user: see src/uploadLimits.ts. The rate limit comes after the
+  // body is read, so a rejected file (too large, empty) doesn't use up the
+  // user's uploads for the minute, and before the quota, so the quota's R2
+  // listing is rate limited too.
+  if (c.env.PHOTO_UPLOAD_LIMITER) {
+    const { success } = await c.env.PHOTO_UPLOAD_LIMITER.limit({ key: session.user.id });
+    if (!success) {
+      c.header("Retry-After", "60");
+      return c.json({ error: "Too many uploads, try again in a minute", code: "rate_limited" }, 429);
+    }
+  }
+
+  const userId = session.user.id;
+  const quota = await enforcePhotoQuota({
+    bucket: c.env.PHOTOS_BUCKET,
+    userId,
+    incomingBytes: upload.bytes.byteLength,
+    referencedKeys: async () => {
+      // The user's own check-ins, plus any check-in pointing into this
+      // user's folder: before photo URLs were checked per user, a check-in
+      // could point at another user's photo, and that photo is still in use.
+      const rows = await getDb(c.env)
+        .selectFrom("check_ins")
+        .select(["user_id", "photo_url"])
+        .where("photo_url", "is not", null)
+        .where(eb => eb.or([
+          eb("user_id", "=", userId),
+          eb("photo_url", "like", `%/photos/${userId}/%`),
+        ]))
+        .execute();
+      const keys = new Set<string>();
+      let unmatched = 0;
+      for (const { user_id, photo_url } of rows) {
+        const key = photo_url ? photoKeyFromUrl(photo_url, userId) : null;
+        if (key) keys.add(key);
+        else if (user_id === userId) unmatched++;
+      }
+      if (unmatched) {
+        // Cleanup stays off for this user until those URLs are looked at,
+        // so once they reach the quota every upload is refused.
+        captureMessage(`Photo quota cleanup skipped: ${unmatched} photo URL(s) don't match a stored key`, {
+          level: "warning",
+          extra: { userId, unmatched },
+        });
+      }
+      return { keys, unmatched };
+    },
+  });
+  if (quota.deleted) console.log(`Deleted ${quota.deleted} unused photo(s) for ${userId} at the quota`);
+  // 507 with a code, so the app can tell "account full" apart from a failed
+  // upload and stop retrying.
+  if (!quota.ok) return c.json({ error: quota.error, code: "photo_quota" }, 507);
 
   const contentType = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
   const key = `photos/${session.user.id}/${crypto.randomUUID()}.${ext}`;

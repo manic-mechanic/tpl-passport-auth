@@ -52,6 +52,13 @@ describe("saveCheckIn", () => {
     expect(await rows()).toMatchObject([{ note: "edited", photo_url: "https://p/x.jpg" }]);
   });
 
+  it("keeps the stored photo when a check-in is re-sent without one", async () => {
+    // e.g. a note edit from a device that doesn't have the photo yet
+    await saveCheckIn(db, { ...base, timestamp: "2026-11-14T14:00:00.000Z", photoUri: "https://p/x.jpg" });
+    await saveCheckIn(db, { ...base, timestamp: "2026-11-14T14:00:00.000Z", note: "edited", photoUri: null });
+    expect(await rows()).toMatchObject([{ note: "edited", photo_url: "https://p/x.jpg" }]);
+  });
+
   it("still updates an edit when an older same-day duplicate exists", async () => {
     // Two same-day rows can exist from before this rule; editing either must work.
     await db.insertInto("check_ins").values([
