@@ -14,18 +14,18 @@
   },
   "dependencies": {
     "@better-auth/expo": "^1.7.25",
-    "@libsql/client": "^0.14.0",
+    "@libsql/client": "^0.18.0",
     "@libsql/kysely-libsql": "^0.4.1",
     "@sentry/cloudflare": "^11.14.0",
     "@sentry/hono": "^11.14.0",
     "aws4fetch": "^1.0.20",
     "better-auth": "^1.7.25",
     "hono": "^4.13.18",
-    "kysely": "^0.28.17",
+    "kysely": "^0.29.9",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261115.1",
+    "@cloudflare/workers-types": "^5.20261116.1",
     "@types/node": "^22.20.5",
     "typescript": "^5.8.3",
     "vitest": "^4.1.11",
