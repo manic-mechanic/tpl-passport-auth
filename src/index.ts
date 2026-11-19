@@ -170,7 +170,15 @@ app.post("/api/upload/photo", async (c) => {
         .where("user_id", "=", userId)
         .where("photo_url", "is not", null)
         .execute();
-      return new Set(rows.map(r => r.photo_url && photoKeyFromUrl(r.photo_url, c.env.R2_PUBLIC_URL)).filter((k): k is string => !!k));
+      const keys = new Set<string>();
+      let unmatched = 0;
+      for (const { photo_url } of rows) {
+        const key = photo_url ? photoKeyFromUrl(photo_url, userId) : null;
+        if (key) keys.add(key);
+        else unmatched++;
+      }
+      if (unmatched) console.warn(`${unmatched} photo URL(s) for ${userId} don't match a stored key; not deleting unused photos`);
+      return { keys, unmatched };
     },
   });
   if (quota.deleted) console.log(`Deleted ${quota.deleted} unused photo(s) for ${userId} at the quota`);

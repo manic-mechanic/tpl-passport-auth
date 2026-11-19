@@ -14,7 +14,8 @@
 // uploads a new object, so a user's folder collects photos no check-in uses.
 // When an upload would go over the quota, those are deleted first (if older
 // than a day, so a photo uploaded but not yet attached to its check-in is
-// kept), and the quota is checked again. Only photos the user's check-ins
+// kept, and only if every check-in's photo URL maps to a key, so nothing is
+// deleted on a guess), and the quota is checked again. Only photos the user's check-ins
 // actually use can fill it.
 
 export const MAX_PHOTOS_PER_USER = 300;
@@ -58,8 +59,7 @@ async function listUserPhotos(bucket: Pick<R2Bucket, "list">, userId: string): P
 
 // Checks that one more photo of `incomingBytes` fits the user's quota,
 // deleting photos no check-in uses first if it wouldn't. `referencedKeys`
-// returns the R2 keys the user's check-ins point at; it's only called when
-// the quota is reached.
+// is only called when the quota is reached.
 //
 // Concurrent uploads each list the folder before any of them stores, so a
 // burst can overshoot the quota by up to the rate limit (20); that's fine
@@ -68,7 +68,10 @@ export async function enforcePhotoQuota(opts: {
   bucket: Pick<R2Bucket, "list" | "delete">;
   userId: string;
   incomingBytes: number;
-  referencedKeys: () => Promise<Set<string>>;
+  // The R2 keys the user's check-ins point at, and how many of their photo
+  // URLs couldn't be matched to a key. Any unmatched URL means we can't be
+  // sure what's in use, so nothing is deleted.
+  referencedKeys: () => Promise<{ keys: Set<string>; unmatched: number }>;
   now?: Date;
   limits?: Limits;
 }): Promise<PhotoQuotaResult> {
@@ -80,7 +83,8 @@ export async function enforcePhotoQuota(opts: {
   if (first.ok) return first;
 
   const referenced = await opts.referencedKeys();
-  const orphans = photos.filter(p => !referenced.has(p.key) && now - p.uploaded.getTime() > ORPHAN_GRACE_MS);
+  if (referenced.unmatched > 0) return first;
+  const orphans = photos.filter(p => !referenced.keys.has(p.key) && now - p.uploaded.getTime() > ORPHAN_GRACE_MS);
   for (let i = 0; i < orphans.length; i += 1000) {
     await opts.bucket.delete(orphans.slice(i, i + 1000).map(p => p.key));
   }
@@ -88,8 +92,18 @@ export async function enforcePhotoQuota(opts: {
   return verdict(photos.filter(p => !orphanKeys.has(p.key)), opts.incomingBytes, limits, orphans.length);
 }
 
-// The R2 key a stored photo URL points at, or null if it isn't one of ours.
-export function photoKeyFromUrl(url: string, publicBase: string): string | null {
-  const base = publicBase.replace(/\/+$/, "") + "/";
-  return url.startsWith(base) ? decodeURIComponent(url.slice(base.length)) : null;
+// The R2 key a stored photo URL points at, or null if it isn't one of this
+// user's uploads. Matches the photos/<userId>/ part of the path whatever the
+// host or base path, since check-ins saved under an earlier R2_PUBLIC_URL
+// (e.g. the default r2.dev address) point at the same keys. Uploads have
+// always used photos/<userId>/<uuid>.<ext>.
+export function photoKeyFromUrl(url: string, userId: string): string | null {
+  let path: string;
+  try {
+    path = decodeURIComponent(new URL(url).pathname);
+  } catch {
+    return null;
+  }
+  const at = path.indexOf(`/photos/${userId}/`);
+  return at === -1 ? null : path.slice(at + 1);
 }

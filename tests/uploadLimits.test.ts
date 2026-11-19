@@ -36,8 +36,8 @@ const photos = (n: number, size = 10, uploaded = daysAgo(3), user = "u1") =>
   Array.from({ length: n }, (_, i) => ({ key: `photos/${user}/${i}.jpg`, size, uploaded }));
 
 const limits = { photos: 5, bytes: 1000 };
-const run = (b: R2Bucket, incomingBytes: number, referenced: string[] = [], extra: object = {}) =>
-  enforcePhotoQuota({ bucket: b, userId: "u1", incomingBytes, referencedKeys: async () => new Set(referenced), now: NOW, limits, ...extra });
+const run = (b: R2Bucket, incomingBytes: number, referenced: string[] = [], unmatched = 0) =>
+  enforcePhotoQuota({ bucket: b, userId: "u1", incomingBytes, referencedKeys: async () => ({ keys: new Set(referenced), unmatched }), now: NOW, limits });
 
 describe("enforcePhotoQuota", () => {
   it("allows an upload under both limits, counting only the user's folder", async () => {
@@ -73,10 +73,16 @@ describe("enforcePhotoQuota", () => {
     expect(b.stored).toHaveLength(5);
   });
 
+  it("deletes nothing when a check-in's photo URL can't be matched to a key", async () => {
+    const b = bucket(photos(5));
+    expect(await run(b, 10, ["photos/u1/0.jpg"], 1)).toMatchObject({ ok: false, deleted: 0 });
+    expect(b.calls.deleted).toEqual([]);
+  });
+
   it("only looks up which photos are used once the quota is reached", async () => {
     let looked = 0;
     const b = bucket(photos(2));
-    await enforcePhotoQuota({ bucket: b, userId: "u1", incomingBytes: 10, referencedKeys: async () => { looked++; return new Set(); }, now: NOW, limits });
+    await enforcePhotoQuota({ bucket: b, userId: "u1", incomingBytes: 10, referencedKeys: async () => { looked++; return { keys: new Set<string>(), unmatched: 0 }; }, now: NOW, limits });
     expect(looked).toBe(0);
   });
 
@@ -89,9 +95,15 @@ describe("enforcePhotoQuota", () => {
 });
 
 describe("photoKeyFromUrl", () => {
-  it("strips the public base, with or without a trailing slash", () => {
-    expect(photoKeyFromUrl("https://p.example/photos/u1/a.jpg", "https://p.example")).toBe("photos/u1/a.jpg");
-    expect(photoKeyFromUrl("https://p.example/photos/u1/a.jpg", "https://p.example/")).toBe("photos/u1/a.jpg");
-    expect(photoKeyFromUrl("https://other.example/photos/u1/a.jpg", "https://p.example")).toBeNull();
+  it("finds the user's key whatever the host or base path", () => {
+    expect(photoKeyFromUrl("https://photos.librarypassport.ca/photos/u1/a.jpg", "u1")).toBe("photos/u1/a.jpg");
+    expect(photoKeyFromUrl("https://pub-abc.r2.dev/photos/u1/a.jpg", "u1")).toBe("photos/u1/a.jpg");
+    expect(photoKeyFromUrl("https://pub-abc.r2.dev/bucket/photos/u1/a.jpg", "u1")).toBe("photos/u1/a.jpg");
+  });
+
+  it("doesn't match another user's photo, a look-alike id, or a non-URL", () => {
+    expect(photoKeyFromUrl("https://p.example/photos/u2/a.jpg", "u1")).toBeNull();
+    expect(photoKeyFromUrl("https://p.example/photos/u10/a.jpg", "u1")).toBeNull();
+    expect(photoKeyFromUrl("not a url", "u1")).toBeNull();
   });
 });
