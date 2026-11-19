@@ -130,32 +130,60 @@ describe("Worker app", () => {
   });
 
   it("limits photo uploads per user: rate, then storage quota", async () => {
-    const stored: { key: string; size: number }[] = [];
+    const original = { PHOTOS_BUCKET: env.PHOTOS_BUCKET, PHOTO_UPLOAD_LIMITER: (env as { PHOTO_UPLOAD_LIMITER?: unknown }).PHOTO_UPLOAD_LIMITER };
+    const stored: { key: string; size: number; uploaded: Date }[] = [];
     let allowed = 2;
     Object.assign(env, {
       PHOTOS_BUCKET: {
-        async put(key: string, bytes: Uint8Array) { stored.push({ key, size: bytes.byteLength }); },
+        async put(key: string, bytes: Uint8Array) { stored.push({ key, size: bytes.byteLength, uploaded: new Date() }); },
         async list({ prefix }: { prefix: string }) {
           return { objects: stored.filter(o => o.key.startsWith(prefix)), truncated: false, delimitedPrefixes: [] };
+        },
+        async delete(keys: string[]) {
+          for (const key of keys) stored.splice(stored.findIndex(o => o.key === key), 1);
         },
       },
       PHOTO_UPLOAD_LIMITER: { async limit() { return { success: allowed-- > 0 }; } },
     });
-    const upload = () => call("/api/upload/photo?ext=jpg", { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: new Uint8Array(10) });
+    try {
+      const upload = (body = new Uint8Array(10)) =>
+        call("/api/upload/photo?ext=jpg", { method: "POST", headers: { "Content-Type": "image/jpeg" }, body });
 
-    expect((await upload()).status).toBe(200);
-    expect((await upload()).status).toBe(200);
-    const limited = await upload();
-    expect(limited.status).toBe(429);
-    expect(limited.headers.get("Retry-After")).toBe("60");
-    expect(stored).toHaveLength(2);
+      // A rejected file doesn't use up the rate limit.
+      expect((await upload(new Uint8Array(0))).status).toBe(400);
+      expect((await upload()).status).toBe(200);
+      expect((await upload()).status).toBe(200);
+      const limited = await upload();
+      expect(limited.status).toBe(429);
+      expect(limited.headers.get("Retry-After")).toBe("60");
+      expect(await limited.json()).toMatchObject({ code: "rate_limited" });
+      expect(stored).toHaveLength(2);
 
-    // Over the photo quota: refused before storing.
-    allowed = 1;
-    stored.push(...Array.from({ length: 300 }, (_, i) => ({ key: `${stored[0]!.key.replace(/[^/]+$/, "")}old-${i}.jpg`, size: 1 })));
-    const full = await upload();
-    expect(full.status).toBe(403);
-    expect(stored).toHaveLength(302);
+      // At the quota, with every photo recent: refused before storing.
+      allowed = 1;
+      const folder = stored[0]!.key.replace(/[^/]+$/, "");
+      stored.push(...Array.from({ length: 300 }, (_, i) => ({ key: `${folder}old-${i}.jpg`, size: 1, uploaded: new Date() })));
+      const full = await upload();
+      expect(full.status).toBe(507);
+      expect(await full.json()).toMatchObject({ code: "photo_quota" });
+      expect(stored).toHaveLength(302);
+
+      // Once those are older than a day, the ones no check-in uses are
+      // deleted to make room. a.jpg is attached to a check-in above, so it
+      // stays (along with the 2 uploads from today).
+      allowed = 1;
+      const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+      for (const o of stored) if (o.key.includes("/old-")) o.uploaded = old;
+      stored.push({ key: `${folder}a.jpg`, size: 1, uploaded: old });
+      expect((await upload()).status).toBe(200);
+      expect(stored.map(o => o.key.replace(folder, "")).sort()).toEqual(
+        expect.arrayContaining(["a.jpg"]),
+      );
+      expect(stored.filter(o => o.key.includes("/old-"))).toHaveLength(0);
+      expect(stored).toHaveLength(4);
+    } finally {
+      Object.assign(env, original);
+    }
   });
 
   it("signs out", async () => {
